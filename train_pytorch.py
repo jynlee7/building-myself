@@ -1,10 +1,11 @@
 """
-Transformer Language Model - PyTorch (complete rewrite for GPU)
-Building an LLM from Scratch - PyTorch Version
+Transformer Language Model - PyTorch Version
+For GPU training on Google Colab
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import time
+import json
 import numpy as np
 
 
@@ -70,8 +71,8 @@ class SelfAttention(nn.Module):
 
 def attention(Q, K, V):
     d_k = Q.shape[-1]
-    scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype))
-    attn_weights = F.softmax(scores, dim=-1)
+    scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k))
+    attn_weights = torch.softmax(scores, dim=-1)
     return torch.matmul(attn_weights, V), attn_weights
 
 
@@ -83,7 +84,7 @@ class FeedForward(nn.Module):
         self.fc2 = nn.Linear(d_ff, d_model)
 
     def forward(self, x):
-        return self.fc2(F.gelu(self.fc1(x)))
+        return self.fc2(torch.nn.functional.gelu(self.fc1(x)))
 
 
 class TransformerBlock(nn.Module):
@@ -116,7 +117,6 @@ class TransformerLanguageModel(nn.Module):
     def __init__(self, vocab_size: int, d_model: int = 128, max_len: int = 512):
         super().__init__()
         self.d_model = d_model
-        self.vocab_size = vocab_size
         self.embedding = Embedding(vocab_size, d_model)
         self.pos_encoding = PositionalEncoding(d_model, max_len)
         self.transformer = TransformerBlock(d_model)
@@ -135,6 +135,64 @@ class TransformerLanguageModel(nn.Module):
     @property
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
+
+
+def create_training_pairs(text, tokenizer, seq_len=32):
+    token_ids = tokenizer.encode(text)
+    pairs = []
+    for i in range(len(token_ids) - seq_len):
+        input_seq = token_ids[i:i + seq_len]
+        target_seq = token_ids[i + 1:i + seq_len + 1]
+        pairs.append((input_seq, target_seq))
+    return pairs
+
+
+def train_model(model, training_pairs, epochs=5, batch_size=64, lr=0.001, device='cuda'):
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+    
+    metrics = {"epoch": [], "loss": [], "perplexity": [], "time": [], "samples": []}
+    n_samples = len(training_pairs)
+    print(f"Training on {n_samples} samples, batch_size={batch_size}, epochs={epochs}")
+    
+    start_time = time.time()
+    
+    for epoch in range(epochs):
+        np.random.shuffle(training_pairs)
+        epoch_loss = 0
+        n_batches = 0
+        
+        for i in range(0, n_samples, batch_size):
+            batch = training_pairs[i:i + batch_size]
+            if len(batch) < batch_size // 2:
+                continue
+            
+            inputs = torch.tensor([p[0] for p in batch], dtype=torch.long).to(device)
+            targets = torch.tensor([p[1] for p in batch], dtype=torch.long).to(device)
+            
+            optimizer.zero_grad()
+            logits = model(inputs)
+            loss = criterion(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+            loss.backward()
+            optimizer.step()
+            
+            epoch_loss += loss.item()
+            n_batches += 1
+        
+        avg_loss = epoch_loss / max(n_batches, 1)
+        ppl = np.exp(avg_loss)
+        elapsed = time.time() - start_time
+        
+        metrics["epoch"].append(epoch + 1)
+        metrics["loss"].append(float(avg_loss))
+        metrics["perplexity"].append(float(ppl))
+        metrics["time"].append(elapsed)
+        metrics["samples"].append(n_samples * (epoch + 1))
+        
+        print(f"Epoch {epoch + 1}/{epochs} | Loss: {avg_loss:.4f} | Perplexity: {ppl:.2f} | Time: {elapsed:.1f}s")
+    
+    return metrics
 
 
 def generate_text(model, tokenizer, prompt, max_new_tokens=50, device='cuda'):
@@ -167,18 +225,26 @@ if __name__ == "__main__":
     tokenizer = Tokenizer(corpus)
     print(f"Vocab size: {tokenizer.vocab_size}")
     
+    seq_len = 32
+    training_pairs = create_training_pairs(corpus, tokenizer, seq_len)
+    print(f"Training pairs: {len(training_pairs)}")
+    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
-    model = TransformerLanguageModel(vocab_size=tokenizer.vocab_size, d_model=128)
-    model = model.to(device)
-    print(f"Model params: {model.num_params:,}")
+    d_model = 128
+    model = TransformerLanguageModel(vocab_size=tokenizer.vocab_size, d_model=d_model)
+    print(f"Model: d_model={d_model}, params={model.num_params:,}")
     
-    test_input = "Hey"
-    test_tokens = torch.tensor([tokenizer.encode(test_input)], dtype=torch.long).to(device)
-    logits = model.predict(test_tokens)
-    print(f"\nInput: '{test_input}'")
-    print(f"Logits shape: {logits.shape}")
+    print("\nStarting training...")
+    metrics = train_model(model, training_pairs, epochs=5, batch_size=64, device=device)
     
-    generated = generate_text(model, tokenizer, "Hey", max_new_tokens=20, device=device)
-    print(f"Generated: '{generated}'")
+    with open("training_metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"\nMetrics saved to training_metrics.json")
+    
+    test_prompts = ["Hey", "What", "Im"]
+    print("\nGeneration samples:")
+    for prompt in test_prompts:
+        generated = generate_text(model, tokenizer, prompt, max_new_tokens=30, device=device)
+        print(f"  '{prompt}' -> '{generated}'")

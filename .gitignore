@@ -1,2 +1,5 @@
 corpus.txt
 training_data.txt
+training_metrics.json
+*.pt
+*.pth
