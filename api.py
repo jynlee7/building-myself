@@ -1,18 +1,33 @@
 """
-API Server for Text Generation
-Run this on Render (Python/Flask service)
+API Server for Text Generation - FastAPI Version
+With automatic Swagger docs at /docs
 """
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import os
 
-app = Flask(__name__)
+app = FastAPI(title="LLM Text Generator", version="1.0.0")
 
-# Set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+# ============== REQUEST/RESPONSE MODELS ==============
+
+class GenerateRequest(BaseModel):
+    prompt: str = "Hey"
+    max_tokens: int = 50
+    temperature: float = 1.0
+
+
+class GenerateResponse(BaseModel):
+    prompt: str
+    generated: str
+    max_tokens: int
+    temperature: float
+
 
 # ============== MODEL ARCHITECTURE ==============
 
@@ -135,7 +150,6 @@ def decode(ids, id_to_token):
 
 print("Loading model...")
 
-# Check for saved model weights
 if os.path.exists('model_weights.pt'):
     print("Loading from model_weights.pt...")
     checkpoint = torch.load('model_weights.pt', map_location=device)
@@ -148,41 +162,42 @@ if os.path.exists('model_weights.pt'):
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     model.eval()
-    print(f"Model loaded from checkpoint")
 else:
-    print("Using fresh model (no weights saved)")
-    # Load corpus from file
-    try:
-        with open('training_data.txt', 'r') as f:
-            CORPUS = f.read()
-    except:
-        CORPUS = """Hey Whats up Im down to go"""
-    
+    print("No model_weights.pt found, using fresh model")
+    with open('training_data.txt', 'r') as f:
+        CORPUS = f.read()
     VOCAB, ID_TO_TOKEN = build_vocab(CORPUS)
     VOCAB_SIZE = len(VOCAB)
     D_MODEL = 128
-
     model = TransformerLanguageModel(VOCAB_SIZE, D_MODEL)
     model = model.to(device)
     model.eval()
 
-print(f"Model on {device}")
+print(f"Model loaded on {device}")
 print(f"Vocab size: {VOCAB_SIZE}")
 
 
 # ============== API ROUTES ==============
 
-@app.route('/generate', methods=['POST'])
-def generate():
-    data = request.get_json()
-    prompt = data.get('prompt', '')
-    max_tokens = data.get('max_tokens', 50)
-    temperature = data.get('temperature', 1.0)
+@app.get("/")
+def root():
+    return {"message": "LLM API running", "docs": "/docs"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "device": device, "vocab_size": VOCAB_SIZE}
+
+
+@app.post("/generate", response_model=GenerateResponse)
+def generate(request: GenerateRequest):
+    prompt = request.prompt
+    max_tokens = request.max_tokens
+    temperature = request.temperature
     
-    # Encode prompt
     token_ids = encode(prompt, VOCAB)
     if not token_ids:
-        return jsonify({'error': 'No valid tokens in prompt'}), 400
+        raise HTTPException(status_code=400, detail="No valid tokens in prompt")
     
     generated = list(token_ids)
     
@@ -194,7 +209,6 @@ def generate():
             input_ids = torch.tensor([generated], dtype=torch.long).to(device)
             logits = model.predict(input_ids)
             
-            # Temperature scaling
             if temperature != 1.0:
                 logits = logits / temperature
             
@@ -207,18 +221,16 @@ def generate():
     
     result = decode(generated, ID_TO_TOKEN)
     
-    return jsonify({
-        'prompt': prompt,
-        'generated': result,
-        'max_tokens': max_tokens,
-        'temperature': temperature
-    })
+    return GenerateResponse(
+        prompt=prompt,
+        generated=result,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
 
 
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({'status': 'ok', 'device': device})
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+# Run with: uvicorn api:app --host 0.0.0.0 --port $PORT
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get('PORT', 5000))
+    uvicorn.run(app, host='0.0.0.0', port=port)
