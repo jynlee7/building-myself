@@ -103,10 +103,10 @@ class TransformerBlock:
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         attn_out, _, _ = self._self_attention_block(x)
-        x = self.ln1(x + attn_out)
+        x = self.ln1.forward(x + attn_out)
 
         ffn_out = self.ffn.forward(x)
-        x = self.ln2(x + ffn_out)
+        x = self.ln2.forward(x + ffn_out)
         return x
 
     def _self_attention_block(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
