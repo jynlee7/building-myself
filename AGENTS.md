@@ -6,10 +6,19 @@
 python tokenizer.py
 ```
 
-This runs the tokenizer on `corpus.txt` and prints vocab size, a sample encode/decode, and verifies roundtrip.
+## Running training (PyTorch on GPU required)
+
+```bash
+python train_pytorch.py
+```
 
 ## Notes
 
-- Simple character-level tokenizer (one token = one unique character)
-- No external dependencies required (numpy imported but not used in main path)
-- Corpus contains chat/message data used for testing encode/decode roundtrip
+- Character-level tokenizer from `corpus.txt` (778 vocab)
+- PyTorch model on GPU for training (NumPy CPU too slow)
+- Training generates `training_metrics.json` with loss/perplexity per epoch
+- Generation via `model.py` or `train_pytorch.py`
+
+## Blog
+
+See `BLOG.md` for the full project documentation.
