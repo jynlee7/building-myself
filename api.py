@@ -230,7 +230,8 @@ def generate(request: GenerateRequest):
 
 
 # Run with: uvicorn api:app --host 0.0.0.0 --port $PORT
+# Or: gunicorn api:app --bind 0.0.0.0:$PORT --workers 1
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     uvicorn.run(app, host='0.0.0.0', port=port)
